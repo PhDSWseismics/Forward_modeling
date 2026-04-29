@@ -8,7 +8,7 @@ import io
 # ==========================================
 # MOTEUR PHYSIQUE : GRAVIMÉTRIE
 # ==========================================
-def calculer_anomalie(x_array, forme, depth, size, dRho):
+def calculer_anomalie(x_array, forme, depth, size, dRho, longueur_plan=10.0):
     """
     Calcule l'anomalie de gravité selon la géométrie.
     Retourne la valeur en µGal.
@@ -25,8 +25,10 @@ def calculer_anomalie(x_array, forme, depth, size, dRho):
         massLin = np.pi * (radius ** 2) * dRho
         gz = factor * (2 * G * massLin * depth) / (x_array ** 2 + depth ** 2)
     elif forme == 'plan':
-        # Couche horizontale de 10m de large (x de -5 à 5), size = épaisseur
-        gz = factor * 2 * G * dRho * size * (np.arctan((x_array + 5) / depth) - np.arctan((x_array - 5) / depth))
+        # Couche horizontale de largeur variable, size = épaisseur
+        # On utilise L/2 pour centrer l'anomalie sur x=0
+        L_demi = longueur_plan / 2.0
+        gz = factor * 2 * G * dRho * size * (np.arctan((x_array + L_demi) / depth) - np.arctan((x_array - L_demi) / depth))
     else:
         gz = np.zeros_like(x_array)
 
@@ -49,11 +51,17 @@ forme = st.sidebar.selectbox(
     "Forme de la cible",
     ['sphère', 'cylindre', 'plan'],
     format_func=lambda x: "Sphère (Grotte isolée)" if x == 'sphère' else (
-        "Cylindre (Galerie infinie)" if x == 'cylindre' else "Plan (Couche horizontale 10m large)")
+        "Cylindre (Galerie infinie)" if x == 'cylindre' else "Plan (Couche horizontale)")
 )
 
 z_depth = st.sidebar.slider("Profondeur du centre (m)", 1.0, 15.0, 4.0, 0.5)
 size = st.sidebar.slider("Épaisseur / Diamètre (m)", 0.5, 10.0, 1.0, 0.1)
+
+# Nouvelle option pour la longueur du plan
+longueur_plan = 10.0
+if forme == 'plan':
+    longueur_plan = st.sidebar.slider("Longueur du plan (m)", 1.0, 50.0, 10.0, 1.0)
+
 density_contrast = st.sidebar.slider("Contraste de densité (kg/m³)", -3000.0, 3000.0, -2700.0, 50.0)
 
 if size >= (z_depth * 2) and forme in ['sphère', 'cylindre']:
@@ -78,11 +86,11 @@ st.sidebar.info(f"**Incertitude totale : ±{erreur_totale_ugal:.1f} µGal**")
 
 # --- CALCUL DES DONNÉES ---
 x_continu = np.linspace(x_min, x_max, 1000)
-y_continu = calculer_anomalie(x_continu, forme, z_depth, size, density_contrast)
+y_continu = calculer_anomalie(x_continu, forme, z_depth, size, density_contrast, longueur_plan)
 
 start_x = x_min + (dec % esp)
 x_mesure = np.arange(start_x, x_max + 0.001, esp)
-y_mesure = calculer_anomalie(x_mesure, forme, z_depth, size, density_contrast)
+y_mesure = calculer_anomalie(x_mesure, forme, z_depth, size, density_contrast, longueur_plan)
 
 # Calcul de la "Pire Courbe"
 if len(y_mesure) > 0:
@@ -109,12 +117,12 @@ with col_help:
         st.write(
             "Puisque l'erreur de l'instrument et l'erreur du GPS sont indépendantes, la méthode classique consiste à les combiner via la racine carrée de la somme des carrés (Root-Sum-Square) :")
         st.latex(r"E_{total} = \sqrt{E_{gravi}^2 + (E_{gps\_cm} \times 3.086)^2}")
-        st.subheader("3. Modélisation de la cible (Sphère)")
+        st.subheader("3. Modélisation de la cible")
         st.write(
-            "Pour la modélisation gravimétrique analytique d'une sphère, la formule de l'anomalie de la composante verticale est régie par :")
+            "Pour une plaque de largeur $L$ et d'épaisseur $t$ à la profondeur $z$ :")
         st.latex(
-            r"\Delta g = G \cdot \frac{\frac{4}{3} \pi R^3 \cdot \Delta \rho \cdot z}{(x^2 + z^2)^{3/2}} \cdot 10^8")
-        st.info("Note : Le facteur 10⁸ est utilisé ici pour obtenir un résultat directement en µGal.")
+            r"\Delta g = 2 G \Delta \rho t (\arctan(\frac{x + L/2}{z}) - \arctan(\frac{x - L/2}{z}))")
+        st.info("Note : Le facteur 10⁸ est utilisé pour le résultat en µGal.")
 
 # --- AFFICHAGE DES RÉSULTATS (KPIs) ---
 max_theo = np.min(y_continu) if density_contrast < 0 else np.max(y_continu)
@@ -155,7 +163,6 @@ with col1:
 
     st.pyplot(fig)
 
-    # BOUTON SNAPSHOT GRAPH 1
     buf1 = io.BytesIO()
     fig.savefig(buf1, format="png", dpi=300, bbox_inches='tight')
     st.download_button(label="📸 Snapshot Signal", data=buf1.getvalue(), file_name="gravi_signal.png", mime="image/png",
@@ -174,7 +181,9 @@ with col2:
         circle = Circle((0, z_depth), size / 2, facecolor=color_target, edgecolor='black', linewidth=2, zorder=3)
         ax2.add_patch(circle)
     elif forme == 'plan':
-        rect = Rectangle((-5, z_depth - size / 2), 10, size, facecolor=color_target, edgecolor='black', linewidth=2,
+        # Utilisation de la longueur dynamique centrée
+        x_rect = -longueur_plan / 2.0
+        rect = Rectangle((x_rect, z_depth - size / 2), longueur_plan, size, facecolor=color_target, edgecolor='black', linewidth=2,
                          zorder=3)
         ax2.add_patch(rect)
 
@@ -195,7 +204,6 @@ with col2:
 
     st.pyplot(fig2)
 
-    # BOUTON SNAPSHOT GRAPH 2
     buf2 = io.BytesIO()
     fig2.savefig(buf2, format="png", dpi=300, bbox_inches='tight')
     st.download_button(label="📸 Snapshot Coupe 2D", data=buf2.getvalue(), file_name="gravi_coupe.png", mime="image/png",
