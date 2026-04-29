@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle, Polygon
+import io
 
 
 # ==========================================
@@ -83,17 +84,14 @@ start_x = x_min + (dec % esp)
 x_mesure = np.arange(start_x, x_max + 0.001, esp)
 y_mesure = calculer_anomalie(x_mesure, forme, z_depth, size, density_contrast)
 
-# Calcul de la "Pire Courbe" (Scénario le plus plat possible dans les barres d'erreur)
+# Calcul de la "Pire Courbe"
 if len(y_mesure) > 0:
     amplitude_max = np.max(np.abs(y_mesure))
-    # Poids allant de 0 (sur les bords) à 1 (au centre de l'anomalie)
     poids = np.abs(y_mesure) / amplitude_max if amplitude_max > 0 else np.zeros_like(y_mesure)
 
     if density_contrast < 0:
-        # Anomalie négative : on remonte le pic (vers 0) et on descend les bords
         y_pire = y_mesure + erreur_totale_ugal * poids - erreur_totale_ugal * (1 - poids)
     else:
-        # Anomalie positive : on descend le pic (vers 0) et on remonte les bords
         y_pire = y_mesure - erreur_totale_ugal * poids + erreur_totale_ugal * (1 - poids)
 else:
     y_pire = np.array([])
@@ -104,16 +102,13 @@ col_title, col_help = st.columns([0.85, 0.15])
 with col_help:
     with st.popover("📖 Résumé Théorique"):
         st.markdown("### Fondamentaux du Module")
-
         st.subheader("1. L'impact de l'altitude")
         st.write(
             "En gravimétrie, l'altitude est souvent la plus grande source d'erreur. Le gradient à l'air libre (Free Air Gradient) est d'environ 0.3086 mGal/m, ce qui signifie qu'une erreur d'altitude d'un seul centimètre engendre une erreur d'environ 3.086 µGal.")
-
         st.subheader("2. Calcul de l'incertitude totale")
         st.write(
             "Puisque l'erreur de l'instrument et l'erreur du GPS sont indépendantes, la méthode classique consiste à les combiner via la racine carrée de la somme des carrés (Root-Sum-Square) :")
         st.latex(r"E_{total} = \sqrt{E_{gravi}^2 + (E_{gps\_cm} \times 3.086)^2}")
-
         st.subheader("3. Modélisation de la cible (Sphère)")
         st.write(
             "Pour la modélisation gravimétrique analytique d'une sphère, la formule de l'anomalie de la composante verticale est régie par :")
@@ -141,28 +136,30 @@ with col1:
     st.subheader("Signal Gravimétrique")
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    # Courbes
     ax.plot(x_continu, y_continu, label='Signal Réel (Continu)', color='#3498db', linewidth=2)
     ax.errorbar(x_mesure, y_mesure, yerr=erreur_totale_ugal, label='Mesures Terrain ± Erreur',
                 color='#e67e22', fmt='o', linestyle='--', linewidth=1.5, markersize=6, capsize=4)
 
-    # Ajout de la Pire Courbe
     if len(y_pire) > 0:
         ax.plot(x_mesure, y_pire, label='Pire scénario (Signal aplati)', color='red', linestyle='-.', linewidth=1.5)
 
     ax.axhline(0, color='black', linewidth=0.8, linestyle='-', alpha=0.5)
     ax.fill_between(x_continu, -erreur_totale_ugal, erreur_totale_ugal, color='gray', alpha=0.1, label="Seuil de bruit")
-
     ax.set_xlabel("Distance X (m)")
     ax.set_ylabel("Anomalie (µGal)")
     ax.set_xlim(x_min, x_max)
-
     if density_contrast < 0:
         ax.invert_yaxis()
-
     ax.grid(True, linestyle=':', alpha=0.7)
     ax.legend(loc="upper right", fontsize="small")
+
     st.pyplot(fig)
+
+    # BOUTON SNAPSHOT GRAPH 1
+    buf1 = io.BytesIO()
+    fig.savefig(buf1, format="png", dpi=300, bbox_inches='tight')
+    st.download_button(label="📸 Snapshot Signal", data=buf1.getvalue(), file_name="gravi_signal.png", mime="image/png",
+                       use_container_width=True)
 
 with col2:
     st.subheader("Coupe du Sous-sol")
@@ -195,4 +192,11 @@ with col2:
     ax2.set_aspect('equal')
     ax2.set_xlabel("Distance X (m)")
     ax2.set_ylabel("Profondeur (m)")
+
     st.pyplot(fig2)
+
+    # BOUTON SNAPSHOT GRAPH 2
+    buf2 = io.BytesIO()
+    fig2.savefig(buf2, format="png", dpi=300, bbox_inches='tight')
+    st.download_button(label="📸 Snapshot Coupe 2D", data=buf2.getvalue(), file_name="gravi_coupe.png", mime="image/png",
+                       use_container_width=True)
