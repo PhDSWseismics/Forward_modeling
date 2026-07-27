@@ -92,16 +92,34 @@ st.markdown(
 
 # --- BARRE LATÉRALE : CIBLE ---
 st.sidebar.header("Contexte karstique")
-preset = st.sidebar.selectbox(
-    "Préréglage de remplissage de la cavité",
-    ["Personnalisé", "Cavité vide (air)", "Cavité noyée (eau)", "Cavité comblée (argile)", "Cavité comblée (sable)"],
-)
-preset_dRho = {
-    "Cavité vide (air)": -2700.0,
-    "Cavité noyée (eau)": -1700.0,
-    "Cavité comblée (argile)": -900.0,
-    "Cavité comblée (sable)": -800.0,
+
+rho_matrices = {
+    "Argile": 2000.0,
+    "Sable / grès": 2300.0,
+    "Craie": 2200.0,
+    "Calcaire": 2600.0,
+    "Dolomie": 2800.0,
+    "Granite": 2650.0,
 }
+rho_remplissages = {
+    "Vide (air)": 1.2,
+    "Eau": 1000.0,
+    "Argile (comblement)": 1900.0,
+    "Sable (comblement)": 1900.0,
+    "Remblai / béton compacté": 2200.0,
+}
+
+matrice = st.sidebar.selectbox("Matrice rocheuse (encaissant)", list(rho_matrices.keys()), index=3)
+remplissage = st.sidebar.selectbox("Remplissage de la cavité", list(rho_remplissages.keys()), index=0)
+
+rho_matrice = rho_matrices[matrice]
+rho_remplissage = rho_remplissages[remplissage]
+default_dRho = rho_remplissage - rho_matrice
+
+st.sidebar.caption(
+    f"ρ matrice = {rho_matrice:.0f} kg/m³ · ρ remplissage = {rho_remplissage:.0f} kg/m³ "
+    f"→ Δρ corrélé = {default_dRho:.0f} kg/m³"
+)
 
 st.sidebar.header("Paramètres de l'anomalie")
 forme = st.sidebar.selectbox(
@@ -117,11 +135,6 @@ forme = st.sidebar.selectbox(
         "chapelet karstique (plans)": "Réseau karstique (lentilles/couches stratiformes)",
     }[x],
 )
-
-if preset != "Personnalisé":
-    default_dRho = preset_dRho[preset]
-else:
-    default_dRho = -2700.0
 
 density_contrast = st.sidebar.slider("Contraste de densité (kg/m³)", -3000.0, 3000.0, default_dRho, 50.0)
 
