@@ -73,11 +73,11 @@ def calculer_anomalie(x_array, forme, params):
 # ==========================================
 st.set_page_config(page_title="Module Gravimétrie Maxxée", layout="wide")
 
-st.title("Module Gravimétrie Maxxée — Karst & Conditions de Terrain")
+st.title("Module Gravimétrie Maxxée — Karst")
 
 st.markdown(
-    "Version étendue du module gravimétrie : géométries karstiques, bruit régional/dérive, "
-    "tirages Monte-Carlo et test de détectabilité (SNR).")
+    "Version étendue du module gravimétrie : géométries karstiques (aven, chapelet de cavités), "
+    "préréglages de remplissage, garde-fou de dimensionnement du profil et test de détectabilité (SNR).")
 
 # --- BARRE LATÉRALE : CIBLE ---
 st.sidebar.header("Contexte karstique")
@@ -183,50 +183,25 @@ erreur_totale_ugal = np.sqrt(incertitude_gravi_ugal ** 2 + erreur_altimetrique_u
 
 st.sidebar.info(f"**Incertitude totale : ±{erreur_totale_ugal:.1f} µGal**")
 
-st.sidebar.header("Conditions de terrain réalistes")
-gradient_regional = st.sidebar.slider("Gradient régional non corrigé (µGal/m)", -20.0, 20.0, 0.0, 0.5)
-derive_ugal_h = st.sidebar.slider("Dérive instrumentale (µGal/h)", 0.0, 50.0, 0.0, 1.0)
-duree_acquisition_h = st.sidebar.slider("Durée totale de l'acquisition (h)", 0.5, 12.0, 3.0, 0.5)
-
-st.sidebar.header("Bruit de mesure")
-mode_bruit = st.sidebar.radio("Type de bruit affiché", ["Tirage aléatoire (Monte-Carlo)", "Pire scénario (déterministe)"])
-seed_bruit = st.sidebar.number_input("Graine aléatoire (bruit)", min_value=0, value=42, step=1)
-
 # --- CALCUL DES DONNÉES ---
 x_continu = np.linspace(x_min, x_max, 1000)
 y_continu = calculer_anomalie(x_continu, forme, params)
 
 start_x = x_min + (dec % esp)
 x_mesure = np.arange(start_x, x_max + 0.001, esp)
-y_mesure_theo = calculer_anomalie(x_mesure, forme, params)
+y_mesure = calculer_anomalie(x_mesure, forme, params)
 
-n_stations = len(x_mesure)
-if n_stations > 0:
-    temps_mesure_h = np.linspace(0, duree_acquisition_h, n_stations)
-    tendance = gradient_regional * x_mesure + derive_ugal_h * temps_mesure_h
+# Calcul de la "Pire Courbe"
+if len(y_mesure) > 0:
+    amplitude_max = np.max(np.abs(y_mesure))
+    poids = np.abs(y_mesure) / amplitude_max if amplitude_max > 0 else np.zeros_like(y_mesure)
 
-    if mode_bruit == "Tirage aléatoire (Monte-Carlo)":
-        rng_bruit = np.random.default_rng(int(seed_bruit))
-        bruit = rng_bruit.normal(0.0, erreur_totale_ugal, n_stations) if erreur_totale_ugal > 0 else np.zeros(n_stations)
+    if density_contrast < 0:
+        y_pire = y_mesure + erreur_totale_ugal * poids - erreur_totale_ugal * (1 - poids)
     else:
-        amplitude_max = np.max(np.abs(y_mesure_theo)) if np.max(np.abs(y_mesure_theo)) > 0 else 1.0
-        poids = np.abs(y_mesure_theo) / amplitude_max
-        signe = -1.0 if density_contrast < 0 else 1.0
-        bruit = signe * (erreur_totale_ugal * poids - erreur_totale_ugal * (1 - poids))
-
-    y_mesure_brut = y_mesure_theo + tendance + bruit
-
-    if n_stations >= 2 and (gradient_regional != 0.0 or derive_ugal_h != 0.0):
-        coeffs = np.polyfit(x_mesure, y_mesure_brut, 1)
-        trend_fit = np.polyval(coeffs, x_mesure)
-        y_mesure_corrige = y_mesure_brut - trend_fit
-    else:
-        y_mesure_corrige = y_mesure_brut
+        y_pire = y_mesure - erreur_totale_ugal * poids + erreur_totale_ugal * (1 - poids)
 else:
-    tendance = np.array([])
-    bruit = np.array([])
-    y_mesure_brut = np.array([])
-    y_mesure_corrige = np.array([])
+    y_pire = np.array([])
 
 # --- SNR / DÉTECTABILITÉ ---
 amplitude_theo_max = np.max(np.abs(y_continu)) if len(y_continu) > 0 else 0.0
@@ -251,23 +226,26 @@ with col_help:
         st.latex(r"\Delta g(x) = G \pi r^2 \Delta\rho \left(\frac{1}{\sqrt{x^2+z_1^2}} - \frac{1}{\sqrt{x^2+z_2^2}}\right)")
         st.subheader("2. Chapelet karstique")
         st.write("Somme linéaire des contributions de N cavités sphériques indépendantes le long du profil.")
-        st.subheader("3. Gradient régional & dérive")
-        st.write(
-            "Le signal brut mesuré inclut un gradient régional non corrigé et une dérive instrumentale "
-            "linéaire dans le temps. Une régression linéaire sur les mesures brutes permet de retirer "
-            "cette tendance (signal corrigé), mais imparfaitement si l'anomalie elle-même a une pente locale.")
-        st.subheader("4. Détectabilité (SNR)")
+        st.subheader("3. Détectabilité (SNR)")
         st.latex(r"SNR = \frac{|\Delta g_{max}|}{\sigma_{total}}")
         st.write("SNR ≥ 5 : détectable · 2 ≤ SNR < 5 : marginal · SNR < 2 : noyé dans le bruit.")
-        st.subheader("5. Incertitude totale")
+        st.subheader("4. Incertitude totale")
         st.latex(r"E_{total} = \sqrt{E_{gravi}^2 + (E_{gps\_cm} \times 3.086)^2}")
 
-# --- KPIs ---
+# --- AFFICHAGE DES RÉSULTATS (KPIs) ---
+max_theo = np.min(y_continu) if density_contrast < 0 else np.max(y_continu)
+if density_contrast < 0:
+    max_mes = np.min(y_mesure) if len(y_mesure) > 0 else 0
+else:
+    max_mes = np.max(y_mesure) if len(y_mesure) > 0 else 0
+
 col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-col_stat1.metric("Amplitude Théorique Max", f"{amplitude_theo_max:.2f} µGal")
-col_stat2.metric("Bruit de mesure (±)", f"{erreur_totale_ugal:.2f} µGal")
-col_stat3.metric("SNR", f"{snr:.1f}" if snr != float("inf") else "∞")
-col_stat4.markdown(f"**Verdict** :  \n:{couleur_snr}[{verdict_snr}]")
+col_stat1.metric("Amplitude Théorique Max", f"{abs(max_theo):.2f} µGal")
+col_stat2.metric("Amplitude Mesurée Max", f"{abs(max_mes):.2f} µGal",
+                 delta=f"{abs(max_mes) - abs(max_theo):.2f} µGal", delta_color="inverse")
+col_stat3.metric("Bruit de mesure (±)", f"{erreur_totale_ugal:.2f} µGal")
+col_stat4.markdown(f"**SNR = {snr:.1f}**" if snr != float("inf") else "**SNR = ∞**")
+col_stat4.markdown(f":{couleur_snr}[{verdict_snr}]")
 
 # --- GRAPHIQUES ---
 col1, col2 = st.columns(2)
@@ -277,17 +255,15 @@ with col1:
     fig, ax = plt.subplots(figsize=(8, 5))
 
     ax.plot(x_continu, y_continu, label="Signal Réel (Continu)", color="#3498db", linewidth=2)
+    ax.errorbar(x_mesure, y_mesure, yerr=erreur_totale_ugal, label="Mesures Terrain ± Erreur",
+                color="#e67e22", fmt="o", linestyle="--", linewidth=1.5, markersize=6, capsize=4)
 
-    if n_stations > 0:
-        ax.plot(x_mesure, y_mesure_brut, "o--", color="#e67e22", linewidth=1.2, markersize=5,
-                label="Mesures brutes (bruit + tendance)")
-        if gradient_regional != 0.0 or derive_ugal_h != 0.0:
-            ax.plot(x_mesure, y_mesure_corrige, "s-.", color="#2ecc71", linewidth=1.5, markersize=5,
-                    label="Mesures corrigées (dé-tendancées)")
+    if len(y_pire) > 0:
+        ax.plot(x_mesure, y_pire, label="Pire scénario (Signal aplati)", color="red", linestyle="-.", linewidth=1.5)
 
     ax.axhline(0, color="black", linewidth=0.8, linestyle="-", alpha=0.5)
     ax.fill_between(x_continu, -erreur_totale_ugal, erreur_totale_ugal, color="gray", alpha=0.1,
-                     label="Seuil de bruit instrumental")
+                     label="Seuil de bruit")
     ax.set_xlabel("Distance X (m)")
     ax.set_ylabel("Anomalie (µGal)")
     ax.set_xlim(x_min, x_max)
