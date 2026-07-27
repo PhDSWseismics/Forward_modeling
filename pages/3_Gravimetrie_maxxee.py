@@ -46,10 +46,18 @@ def anomalie_cheminee_verticale(x, z_top, longueur, diametre, dRho):
 
 
 def anomalie_chapelet(x, positions, profondeurs, tailles, dRho):
-    """Réseau karstique : somme de cavités sphériques alignées le long du profil."""
+    """Réseau karstique (sphères) : somme de cavités sphériques alignées le long du profil."""
     total = np.zeros_like(x)
     for x0, z0, s0 in zip(positions, profondeurs, tailles):
         total += anomalie_sphere(x - x0, z0, s0, dRho)
+    return total
+
+
+def anomalie_reseau_plans(x, positions, profondeurs, longueurs, epaisseurs, dRho):
+    """Réseau karstique (plans) : somme de lentilles/couches horizontales alignées le long du profil."""
+    total = np.zeros_like(x)
+    for x0, z0, l0, e0 in zip(positions, profondeurs, longueurs, epaisseurs):
+        total += anomalie_plan(x - x0, z0, e0, dRho, l0)
     return total
 
 
@@ -63,8 +71,11 @@ def calculer_anomalie(x_array, forme, params):
         return anomalie_cheminee_verticale(x_array, params["z_top"], params["longueur"], params["size"], dRho)
     elif forme == "plan (couche)":
         return anomalie_plan(x_array, params["z_depth"], params["size"], dRho, params["longueur_plan"])
-    elif forme == "chapelet karstique":
+    elif forme == "chapelet karstique (sphères)":
         return anomalie_chapelet(x_array, params["positions"], params["profondeurs"], params["tailles"], dRho)
+    elif forme == "chapelet karstique (plans)":
+        return anomalie_reseau_plans(x_array, params["positions"], params["profondeurs"],
+                                      params["longueurs"], params["epaisseurs"], dRho)
     return np.zeros_like(x_array)
 
 
@@ -95,13 +106,15 @@ preset_dRho = {
 st.sidebar.header("Paramètres de l'anomalie")
 forme = st.sidebar.selectbox(
     "Forme de la cible",
-    ["sphère", "cylindre horizontal", "cheminée verticale (aven)", "plan (couche)", "chapelet karstique"],
+    ["sphère", "cylindre horizontal", "cheminée verticale (aven)", "plan (couche)",
+     "chapelet karstique (sphères)", "chapelet karstique (plans)"],
     format_func=lambda x: {
         "sphère": "Sphère (grotte isolée)",
         "cylindre horizontal": "Cylindre horizontal (galerie infinie)",
         "cheminée verticale (aven)": "Cheminée verticale (aven / cheminée d'effondrement)",
         "plan (couche)": "Plan (couche horizontale)",
-        "chapelet karstique": "Chapelet karstique (réseau de cavités)",
+        "chapelet karstique (sphères)": "Chapelet karstique (réseau de cavités isolées)",
+        "chapelet karstique (plans)": "Réseau karstique (lentilles/couches stratiformes)",
     }[x],
 )
 
@@ -137,8 +150,8 @@ elif forme == "cheminée verticale (aven)":
     profondeur_bas = z_top + longueur_cheminee
     z_depth = z_top  # pour les avertissements génériques
 
-elif forme == "chapelet karstique":
-    st.sidebar.subheader("Réseau de cavités")
+elif forme == "chapelet karstique (sphères)":
+    st.sidebar.subheader("Réseau de cavités (sphères)")
     n_cavites = st.sidebar.slider("Nombre de cavités", 2, 6, 4, 1)
     espacement_moyen = st.sidebar.slider("Espacement moyen (m)", 1.0, 10.0, 4.0, 0.5)
     profondeur_moyenne = st.sidebar.slider("Profondeur moyenne (m)", 1.0, 30.0, 6.0, 0.5)
@@ -160,6 +173,34 @@ elif forme == "chapelet karstique":
 
     z_depth = np.mean(profondeurs)
     profondeur_bas = np.max(profondeurs + tailles / 2.0)
+
+elif forme == "chapelet karstique (plans)":
+    st.sidebar.subheader("Réseau karstique (lentilles stratiformes)")
+    n_lentilles = st.sidebar.slider("Nombre de lentilles", 2, 6, 4, 1)
+    espacement_moyen = st.sidebar.slider("Espacement moyen (m)", 1.0, 10.0, 4.0, 0.5)
+    profondeur_moyenne = st.sidebar.slider("Profondeur moyenne (m)", 1.0, 30.0, 6.0, 0.5)
+    variabilite_prof = st.sidebar.slider("Variabilité de profondeur (± m)", 0.0, 10.0, 1.0, 0.5)
+    longueur_moyenne = st.sidebar.slider("Longueur moyenne des lentilles (m)", 0.5, 10.0, 3.0, 0.5)
+    epaisseur_moyenne = st.sidebar.slider("Épaisseur moyenne des lentilles (m)", 0.2, 4.0, 0.8, 0.1)
+    seed_reseau = st.sidebar.number_input("Graine aléatoire (géométrie)", min_value=0, value=1, step=1)
+
+    rng_geo = np.random.default_rng(int(seed_reseau))
+    positions = (np.arange(n_lentilles) - (n_lentilles - 1) / 2.0) * espacement_moyen
+    positions = positions + rng_geo.uniform(-espacement_moyen * 0.15, espacement_moyen * 0.15, n_lentilles)
+    profondeurs = profondeur_moyenne + rng_geo.uniform(-variabilite_prof, variabilite_prof, n_lentilles)
+    profondeurs = np.clip(profondeurs, 0.5, None)
+    longueurs = longueur_moyenne + rng_geo.uniform(-longueur_moyenne * 0.3, longueur_moyenne * 0.3, n_lentilles)
+    longueurs = np.clip(longueurs, 0.5, None)
+    epaisseurs = epaisseur_moyenne + rng_geo.uniform(-epaisseur_moyenne * 0.3, epaisseur_moyenne * 0.3, n_lentilles)
+    epaisseurs = np.clip(epaisseurs, 0.2, None)
+
+    params["positions"] = positions
+    params["profondeurs"] = profondeurs
+    params["longueurs"] = longueurs
+    params["epaisseurs"] = epaisseurs
+
+    z_depth = np.mean(profondeurs)
+    profondeur_bas = np.max(profondeurs + epaisseurs / 2.0)
 
 st.sidebar.header("Paramètres d'acquisition")
 x_min = st.sidebar.number_input("Profil min (m)", value=-15.0)
@@ -270,7 +311,8 @@ with col1:
     if density_contrast < 0:
         ax.invert_yaxis()
     ax.grid(True, linestyle=":", alpha=0.7)
-    ax.legend(loc="upper right", fontsize="small")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=2, fontsize="small", frameon=False)
+    fig.subplots_adjust(bottom=0.3)
 
     st.pyplot(fig)
 
@@ -301,10 +343,15 @@ with col2:
         ellipse = Ellipse((0, (params["z_top"] + profondeur_bas) / 2), params["size"], params["longueur"],
                            facecolor=color_target, edgecolor="black", linewidth=2, zorder=3)
         ax2.add_patch(ellipse)
-    elif forme == "chapelet karstique":
+    elif forme == "chapelet karstique (sphères)":
         for x0, z0, s0 in zip(params["positions"], params["profondeurs"], params["tailles"]):
             circle = Circle((x0, z0), s0 / 2, facecolor=color_target, edgecolor="black", linewidth=2, zorder=3)
             ax2.add_patch(circle)
+    elif forme == "chapelet karstique (plans)":
+        for x0, z0, l0, e0 in zip(params["positions"], params["profondeurs"], params["longueurs"], params["epaisseurs"]):
+            rect = Rectangle((x0 - l0 / 2, z0 - e0 / 2), l0, e0, facecolor=color_target, edgecolor="black",
+                              linewidth=2, zorder=3)
+            ax2.add_patch(rect)
 
     taille_marqueur_x = (x_max - x_min) * 0.02
     taille_marqueur_y = profondeur_max_affichage * 0.05
