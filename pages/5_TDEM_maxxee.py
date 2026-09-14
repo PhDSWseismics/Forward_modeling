@@ -139,7 +139,18 @@ def espacement_profils(largeur, z_centre, detection_nette):
     facteur = 2.0 if detection_nette else 1.0
     largeur_anomalie = largeur + facteur * z_centre
     arrondi = lambda x: max(1.0, np.floor(x * 2.0) / 2.0)
-    return largeur_anomalie, arrondi(largeur_anomalie / 3.0), arrondi(largeur_anomalie / 4.0)
+    esp_profils = arrondi(largeur_anomalie / 3.0)
+    if esp_profils > 1.0 and np.ceil(largeur_anomalie / esp_profils) - 1 < 3:
+        esp_profils -= 0.5          # garantit 3 profils même quand la grille tombe mal
+    return largeur_anomalie, esp_profils, arrondi(largeur_anomalie / 4.0)
+
+
+def profils_sur_anomalie(largeur_anomalie, espacement, decalage):
+    """Positions des profils (m) qui recoupent l'anomalie, pour une grille décalée de `decalage`."""
+    demi = largeur_anomalie / 2.0
+    k = np.arange(np.floor((-demi - decalage) / espacement), np.ceil((demi - decalage) / espacement) + 1)
+    y = k * espacement + decalage
+    return y[np.abs(y) < demi]
 
 
 def gates_exploitables(sig_avec, sig_sans, bruit_v, seuil_pct):
@@ -411,8 +422,15 @@ st.markdown(f"""
 4. **La pente renseigne sur le terrain** : un terrain **conducteur** (argile, eau) garde le signal
    longtemps, la courbe descend lentement. Un terrain **résistant** (calcaire sec, air) le laisse
    s'éteindre vite, la courbe chute rapidement.
-5. **Bleu = terrain sans cavité, orange = avec cavité.** Là où les deux courbes **s'écartent**,
-   la cavité modifie le signal.
+5. **Bleu = terrain sans cavité, orange = avec cavité.** Aux temps très courts, les deux courbes
+   sont **confondues** : le signal vient de la couche de surface, identique dans les deux cas. Quand
+   le signal atteint la profondeur de la cavité, elles **s'écartent** :
+   - cavité **conductrice** (argile, eau) : l'orange passe **au-dessus** du bleu, car la cavité retient
+     les courants et le signal s'éteint moins vite ;
+   - cavité **résistante** (vide, sable sec) : l'orange passe très légèrement **en dessous**, avec un
+     écart souvent trop faible pour être mesuré.
+
+   Aux temps tardifs, le signal vient de plus profond que la cavité : l'écart diminue.
 6. **Zone grise = bruit.** Tout ce qui est dedans n'est pas mesurable. La cavité n'est visible que
    si l'écart apparaît **au-dessus** de la zone grise : ces points sont entourés en **vert**.
 7. **Un creux en « V »** sur la courbe n'est pas une erreur : avec des boucles séparées, le signal
@@ -464,15 +482,45 @@ else:
     col_e1, col_e2, col_e3 = st.columns(3)
     col_e1.metric("Largeur de l'anomalie en surface", f"≈ {largeur_anomalie:.0f} m",
                   help="Zone, en surface, au-dessus de laquelle la cavité modifie le signal.")
-    col_e2.metric("Espacement des profils", f"≤ {esp_profils:.1f} m")
-    col_e3.metric("Espacement des stations", f"≤ {esp_stations:.1f} m",
+    col_e2.metric("Espacement des profils conseillé", f"≤ {esp_profils:.1f} m")
+    col_e3.metric("Espacement des stations conseillé", f"≤ {esp_stations:.1f} m",
                   help="Distance entre deux mesures successives le long d'un profil.")
+
+    # --- espacement interprofils choisi par l'utilisateur ---
+    col_c1, col_c2 = st.columns([0.35, 0.65])
+    mode_espacement = col_c1.radio("Espacement interprofils", ["Conseillé", "Personnalisé"],
+                                   horizontal=True)
+    if mode_espacement == "Personnalisé":
+        esp_choisi = col_c2.slider("Espacement interprofils prévu (m)", 1.0, 100.0,
+                                   float(esp_profils), 0.5, key="esp_interprofils",
+                                   help="Distance entre deux profils parallèles de votre plan d'acquisition.")
+    else:
+        esp_choisi = esp_profils
+
+    # cas le moins favorable : position de la grille qui laisse le moins de profils sur l'anomalie
+    decalage = min((0.0, esp_choisi / 2.0),
+                   key=lambda d: len(profils_sur_anomalie(largeur_anomalie, esp_choisi, d)))
+    n_profils = len(profils_sur_anomalie(largeur_anomalie, esp_choisi, decalage))
+
+    if n_profils >= 3:
+        st.success(f"Avec **{esp_choisi:.1f} m** entre profils, au moins **{n_profils} profils** recoupent "
+                   f"l'anomalie : la cavité peut être **détectée et localisée** (centre et bords).")
+    elif n_profils >= 1:
+        st.warning(f"Avec **{esp_choisi:.1f} m** entre profils, seulement **{n_profils} profil"
+                   f"{'s' if n_profils > 1 else ''}** recoupe{'nt' if n_profils > 1 else ''} l'anomalie "
+                   f"dans le cas le moins favorable : la cavité sera **détectée**, mais sa position et "
+                   f"ses bords resteront **imprécis**. Pour la localiser : ≤ {esp_profils:.1f} m.")
+    else:
+        st.error(f"Avec **{esp_choisi:.1f} m** entre profils, la cavité peut **passer entre deux profils "
+                 f"sans être vue** (anomalie de ≈ {largeur_anomalie:.0f} m de large). "
+                 f"Il faut au moins resserrer sous {largeur_anomalie:.0f} m pour la détecter, "
+                 f"et ≤ {esp_profils:.1f} m pour la localiser.")
 
     col_p1, col_p2 = st.columns([0.55, 0.45])
 
     with col_p1:
         fig5, ax5 = plt.subplots(figsize=(7, 6))
-        demi = max(largeur_anomalie * 1.3, 3 * esp_profils)
+        demi = max(largeur_anomalie * 1.3, 2.5 * esp_choisi)
 
         ax5.add_patch(plt.Circle((0, 0), largeur_anomalie / 2, facecolor="#f5b041", alpha=0.25,
                                  edgecolor="#e67e22", linestyle="--", linewidth=2,
@@ -480,8 +528,10 @@ else:
         ax5.add_patch(plt.Circle((0, 0), largeur_karst / 2, facecolor="#c0392b", alpha=0.6,
                                  edgecolor="#922b21", linewidth=1.5, label="Cavité (vue de dessus)"))
 
-        # profils décalés d'un demi-pas : cas le moins favorable (aucun profil pile sur la cavité)
-        y_profils = np.arange(-demi, demi + esp_profils, esp_profils) + esp_profils / 2
+        # grille placée dans le cas le moins favorable
+        k_max = np.ceil(demi / esp_choisi) + 1
+        y_profils = np.arange(-k_max, k_max + 1) * esp_choisi + decalage
+        y_profils = y_profils[np.abs(y_profils) <= demi]
         x_stations = np.arange(-demi, demi + esp_stations, esp_stations)
         for k, y in enumerate(y_profils):
             ax5.axhline(y, color="#2c3e50", linewidth=1, alpha=0.6,
@@ -496,7 +546,8 @@ else:
         ax5.set_aspect("equal")
         ax5.set_xlabel("Distance (m)")
         ax5.set_ylabel("Distance (m)")
-        ax5.set_title("Vue en plan de la maille conseillée", fontsize=11)
+        ax5.set_title(f"Vue en plan : profils tous les {esp_choisi:.1f} m, stations tous les "
+                      f"{esp_stations:.1f} m", fontsize=11)
         ax5.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2, fontsize="small", frameon=False)
         fig5.subplots_adjust(bottom=0.25)
 
@@ -521,8 +572,9 @@ else:
    → profils tous les **{esp_profils:.1f} m**.
 3. **Le long d'un profil**, il faut **4 à 5 mesures** sur l'anomalie pour dessiner sa forme
    → une station tous les **{esp_stations:.1f} m**.
-4. **Sur le plan**, les profils sont placés dans le cas le moins favorable (aucun ne passe pile
-   sur la cavité) : les points **verts** sont les mesures qui la « voient ».
+4. **Sur le plan**, les profils sont placés dans le **cas le moins favorable** (le moins de profils
+   possible sur l'anomalie) : les points **verts** sont les mesures qui la « voient ».
+   Choisissez « Personnalisé » pour tester l'espacement interprofils de votre plan d'acquisition.
 
 **Conseils terrain**
 - Si la cavité est une **galerie allongée**, orientez les profils **perpendiculairement** à sa direction supposée.
