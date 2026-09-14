@@ -18,4 +18,7 @@ La méthode gravimétrique repose sur la mesure des variations du champ de pesan
 
 **2. Géoradar (GPR - Ground Penetrating Radar)**
 Le géoradar exploite la propagation et la réflexion d'ondes électromagnétiques à haute fréquence. Ce module propose d'évaluer la profondeur d'investigation théorique en fonction de l'atténuation du signal (liée à la conductivité et la permittivité diélectrique du milieu), et d'anticiper l'empreinte cinématique (radargramme) et la résolution verticale selon la fréquence de l'antenne sélectionnée.
+
+**3. MASW (Multichannel Analysis of Surface Waves)**
+La MASW exploite la dispersion des ondes de surface (Rayleigh) pour estimer les vitesses sismiques du sous-sol. Ce module dimensionne un dispositif d'acquisition (nombre de géophones, espacement, fréquence de coupure des capteurs) et en déduit la profondeur d'investigation atteignable ainsi que la taille minimale d'un objet détectable à une profondeur donnée.
 """)
